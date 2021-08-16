@@ -5,9 +5,11 @@ const path = require('path');
 
 const mongoose = require('mongoose');
 
-const Product = require('./models/product');
 const methodOverride = require('method-override');
+const AppError = require('./AppError');
 
+
+const Product = require('./models/product');
 
 mongoose.connect('mongodb://localhost:27017/farmStand', {useNewUrlParser: true, useUnifiedTopology: true})
 .then(() =>{
@@ -27,71 +29,85 @@ app.use(methodOverride('_method'))
 
 const categories = ['fruit','vegetable','dairy','fungi'];
 
-app.get('/products', async(req,res)=>{
-    const { category } =req.query;
+function wrapAsync(fn) {
+    return function (req, res, next) {
+        fn(req, res, next).catch(e => next(e))
+    }
+}
+
+
+app.get('/products', wrapAsync(async (req, res, next) => {
+    const { category } = req.query;
     if (category) {
         const products = await Product.find({ category })
-        res.render('products/index', {products, category})
-        
+        res.render('products/index', { products, category })
     } else {
         const products = await Product.find({})
-        res.render('products/index', {products, category :"All" })
-        
-        
+        res.render('products/index', { products, category: 'All' })
     }
-   //console.log(products);
+}))
+
+app.get('/products/new', (req, res) => {
+    res.render('products/new', { categories })
 })
 
-app.get('/products/new', (req,res) =>{
-    res.render('products/new', { categories });
-})
-app.post('/products', async (req, res)=>{
-    //console.log(req.body);
+app.post('/products', wrapAsync(async (req, res, next) => {
     const newProduct = new Product(req.body);
     await newProduct.save();
     res.redirect(`/products/${newProduct._id}`)
-    //console.log(newProduct);
-    //res.send(`making your product`);
-
-})
+}))
 
 
 
-app.get('/products/:id', async (req,res) =>{
+app.get('/products/:id', wrapAsync(async (req, res, next) => {
     const { id } = req.params;
     const product = await Product.findById(id)
-    console.log(product);
-    res.render('products/show',{product});
+    if (!product) {
+        throw new AppError('Product Not Found', 404);
+    }
+    res.render('products/show', { product })
+}))
 
-    
-
-})
-
-app.get('/products/:id/edit', async(req,res) =>{
+app.get('/products/:id/edit', wrapAsync(async (req, res, next) => {
     const { id } = req.params;
-    const product = await Product.findById(id)
-    
-    res.render('products/edit',{ product , categories });
-})
+    const product = await Product.findById(id);
+    if (!product) {
+        throw new AppError('Product Not Found', 404);
+    }
+    res.render('products/edit', { product, categories })
+}))
 
-app.put('/products/:id', async(req,res) =>{
-    const {id} = req.params;
-    const product = await Product.findByIdAndUpdate(id, req.body, { runValidators: true , new :true})
-    res.redirect(`/products/${product._id}`)
-    /*console.log(req.body);
-    res.send(`PUT!!`)*/
+app.put('/products/:id', wrapAsync(async (req, res, next) => {
+    const { id } = req.params;
+    const product = await Product.findByIdAndUpdate(id, req.body, { runValidators: true, new: true });
+    res.redirect(`/products/${product._id}`);
+}))
 
-
-})
-
-app.delete('/products/:id', async (req, res) => {
+app.delete('/products/:id', wrapAsync(async (req, res) => {
     const { id } = req.params;
     const deletedProduct = await Product.findByIdAndDelete(id);
     res.redirect('/products');
+}));
+
+const handleValidationErr = err => {
+    console.dir(err);
+    //In a real app, we would do a lot more here...
+    return new AppError(`Validation Failed...${err.message}`, 400)
+}
+
+app.use((err, req, res, next) => {
+    console.log(err.name);
+    //We can single out particular types of Mongoose Errors:
+    if (err.name === 'ValidationError') err = handleValidationErr(err)
+    next(err);
 })
 
-
-
-app.listen(3000, () =>{
-    console.log("App is listening 3000");
+app.use((err, req, res, next) => {
+    const { status = 500, message = 'Something went wrong' } = err;
+    res.status(status).send(message);
 })
+
+app.listen(3000, () => {
+    console.log("APP IS LISTENING ON PORT 3000!")
+})
+
